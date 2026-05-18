@@ -1,95 +1,34 @@
-/* ====================================================================
-   FINAL LOGISTIC REGRESSION PIPELINE — FROM CLEAN DATASET
-   Starting point: Work.DataQuest (already cleaned, WoE-encoded,
-   log-transformed, imputed, and feature-engineered)
-   Goal: Select the best logistic regression model, validate rigorously,
-         retrain on 100% of train, score the test set.
-   ==================================================================== */
+ODS GRAPHICS OFF;  /* Prevent Java OOM crash from rendering large ROC plots */
+ODS RTF;
+
+/* ============================================================================
+   Section 1 — DATA PREPARATION, MULTICOLLINEARITY CHECKS, AND MODEL BUILDING
+   ----------------------------------------------------------------------------
+   Purpose   : Prepare the dataset, validate variable quality, check for
+               multicollinearity, and train four candidate logistic regression
+               models on the local training split.
+
+   Datasets  : WORK.DataQuest  — full labelled dataset (train + test rows)
+               WORK.Train      — rows where SET = 'train'
+               WORK.Test       — rows where SET = 'test'
+               WORK.Local_Train — 80% random split of WORK.Train (model fitting)
+               WORK.Local_Val   — 20% random split of WORK.Train (model evaluation)
+   ============================================================================ */
 
 
-/* ====================================================================
-   SECTION 1 — DATA VERIFICATION
-   ==================================================================== */
+/* ROW COUNT AND DEFAULT RATE BY DATASET SPLIT */
 
-/* Confirm row counts and target distribution before doing anything */
-proc freq data=WORK.DataQuest;
-    tables SET * default_flag / nocol nopercent;
-    title "Row counts and default rates by dataset split";
-run;
-
-/* Check for any remaining missing values in the model-ready variables */
-proc means data=WORK.DataQuest nmiss n mean std min max;
-    var age employment_length_years num_open_accounts num_delinquencies_2yr
-        total_revolving_balance credit_utilisation_pct months_since_oldest_account
-        num_hard_inquiries_6mo interest_rate dti_ratio months_since_last_delinquency
-        pct_accounts_current months_at_current_address loan_to_income_ratio
-        credit_risk_index log_annual_income log_loan_amount
-        home_ownership_woe region_woe loan_purpose_woe
-        email_domain_type_woe phone_verified_woe
-        delinquency_flag high_utilisation_flag ever_delinquent;
-    title "Missing value check — all model-ready variables";
-run;
-
-
-/* ====================================================================
-   SECTION 2 — SPLIT TRAIN FROM TEST USING THE SET COLUMN
-   ==================================================================== */
-
-DATA WORK.Train WORK.Test;
-    SET WORK.DataQuest;
-    SET_lower = lowcase(SET);     /* normalise any mixed-case SET values */
-    IF  SET_lower = 'train' THEN OUTPUT WORK.Train;
-    ELSE IF SET_lower = 'test'  THEN OUTPUT WORK.Test;
-    DROP SET_lower;
+PROC FREQ DATA = WORK.DataQuest;
+    TABLES SET * default_flag / NOCOL NOPERCENT;
+    TITLE "Row counts and default rates by dataset split (train vs test)";
 RUN;
 
-proc sql;
-    select 'Train' as Dataset, count(*) as Rows, sum(default_flag) as Defaults,
-           mean(default_flag) as Default_Rate format=percent8.2
-    from WORK.Train
-    union all
-    select 'Test', count(*), sum(default_flag), mean(default_flag)
-    from WORK.Test;
-    title "Train / Test split verification";
-quit;
 
+/* MISSING VALUE CHECK ACROSS ALL MODEL-READY VARIABLES */
 
-/* ====================================================================
-   SECTION 3 — SPLIT WORK.TRAIN INTO 80% LOCAL TRAIN + 20% LOCAL VAL
-   The validation set is your internal "exam" before touching the test set.
-   Seed is fixed so every run produces the same split.
-   ==================================================================== */
-
-DATA WORK.Local_Train WORK.Local_Val;
-    SET WORK.Train;
-    CALL streaminit(2024);
-    IF rand('uniform') <= 0.80 THEN OUTPUT WORK.Local_Train;
-    ELSE                            OUTPUT WORK.Local_Val;
-RUN;
-
-proc sql;
-    select 'Local_Train' as Split, count(*) as N, sum(default_flag) as Defaults,
-           mean(default_flag) as Rate format=percent8.2
-    from WORK.Local_Train
-    union all
-    select 'Local_Val',   count(*), sum(default_flag), mean(default_flag)
-    from WORK.Local_Val;
-    title "Local Train / Validation split verification";
-quit;
-
-
-/* ====================================================================
-   SECTION 4 — FOUR CANDIDATE MODELS ON LOCAL_TRAIN
-   We score each one onto Local_Val so we can compare on the same holdout.
-   ==================================================================== */
-
-/* ----------------------------------------------------------------
-   MODEL 1 — STEPWISE: all 25 available predictors, data decides
-   ---------------------------------------------------------------- */
-proc logistic data=WORK.Local_Train descending plots=(roc);
-    model default_flag =
-        /* continuous / ratio features */
-        age
+PROC MEANS DATA = WORK.DataQuest NMISS N MEAN STD MIN MAX;
+    VAR
+        /* Continuous and ratio features */
         employment_length_years
         num_open_accounts
         num_delinquencies_2yr
@@ -97,7 +36,6 @@ proc logistic data=WORK.Local_Train descending plots=(roc);
         credit_utilisation_pct
         months_since_oldest_account
         num_hard_inquiries_6mo
-        interest_rate
         dti_ratio
         months_since_last_delinquency
         pct_accounts_current
@@ -106,440 +44,855 @@ proc logistic data=WORK.Local_Train descending plots=(roc);
         credit_risk_index
         log_annual_income
         log_loan_amount
-        /* WoE-encoded categoricals */
+
+        /* Weight-of-Evidence encoded categorical variables */
         home_ownership_woe
-        region_woe
         loan_purpose_woe
         email_domain_type_woe
         phone_verified_woe
-        /* binary engineered flags */
+        age_group_woe
+
+        /* Binary engineered indicator flags */
+        delinquency_flag
+        high_utilisation_flag
+        ever_delinquent;
+
+    TITLE "Missing value check across all model-ready variables";
+RUN;
+
+
+/* SPLIT WORK.DataQuest INTO TRAIN AND TEST SETS */
+
+DATA WORK.Train  WORK.Test;
+    SET WORK.DataQuest;
+    SET_lower = LOWCASE(SET);
+
+    IF      SET_lower = 'train' THEN OUTPUT WORK.Train;
+    ELSE IF SET_lower = 'test'  THEN OUTPUT WORK.Test;
+
+    DROP SET_lower;
+RUN;
+
+
+/* Verify the split: confirm row counts and that default rates are stable */
+PROC SQL;
+    SELECT
+        'Train' AS Dataset,
+        COUNT(*)            AS Row_Count,
+        SUM(default_flag)   AS Number_of_Defaults,
+        MEAN(default_flag)  AS Default_Rate FORMAT = PERCENT8.2
+    FROM WORK.Train
+
+    UNION ALL
+
+    SELECT
+        'Test',
+        COUNT(*),
+        SUM(default_flag),
+        MEAN(default_flag)
+    FROM WORK.Test;
+
+    TITLE "Train and Test split verification (row counts and default rates)";
+QUIT;
+
+
+/* CREATE LOCAL TRAIN (80%) AND LOCAL VALIDATION (20%) SPLITS
+
+   We hold out 20% of WORK.Train as a local validation set so we can compare
+   candidate models without touching the blind test set (WORK.Test).
+
+   CALL STREAMINIT(2024) sets the random seed so the split is reproducible.
+   Anyone running this code with seed 2024 will get the same split. */
+
+DATA WORK.Local_Train  WORK.Local_Val;
+    SET WORK.Train;
+    CALL STREAMINIT(2024);          /* Fix the random seed for reproducibility */
+
+    IF   RAND('uniform') <= 0.80 THEN OUTPUT WORK.Local_Train;
+    ELSE                              OUTPUT WORK.Local_Val;
+RUN;
+
+
+/* Verify that both splits are balanced and have similar default rates */
+PROC SQL;
+    SELECT
+        'Local_Train' AS Split,
+        COUNT(*)           AS Row_Count,
+        SUM(default_flag)  AS Number_of_Defaults,
+        MEAN(default_flag) AS Default_Rate FORMAT = PERCENT8.2
+    FROM WORK.Local_Train
+
+    UNION ALL
+
+    SELECT
+        'Local_Val',
+        COUNT(*),
+        SUM(default_flag),
+        MEAN(default_flag)
+    FROM WORK.Local_Val;
+
+    TITLE "Local Train / Validation split verification (80% / 20%)";
+QUIT;
+
+
+/* CORRELATION MATRIX
+   High pairwise correlations (|r| > 0.70) between predictors indicate
+   potential multicollinearity.  Variables that are highly correlated carry
+   redundant information and can destabilise coefficient estimates. */
+
+PROC CORR DATA = WORK.Local_Train NOSIMPLE;
+    VAR
+        /* Continuous and ratio features */
+        employment_length_years
+        num_open_accounts
+        num_delinquencies_2yr
+        total_revolving_balance
+        credit_utilisation_pct
+        months_since_oldest_account
+        num_hard_inquiries_6mo
+        dti_ratio
+        months_since_last_delinquency
+        pct_accounts_current
+        months_at_current_address
+        loan_to_income_ratio
+        credit_risk_index
+        log_annual_income
+        log_loan_amount
+
+        /* Weight-of-Evidence encoded categorical variables */
+        home_ownership_woe
+        loan_purpose_woe
+        email_domain_type_woe
+        phone_verified_woe
+        age_group_woe
+
+        /* Binary engineered indicator flags */
+        delinquency_flag
+        high_utilisation_flag
+        ever_delinquent;
+
+    TITLE "Pairwise correlation matrix (flag |r| > 0.70 for follow-up)";
+RUN;
+
+
+/* FIRST MULTICOLLINEARITY CHECK: FULL VARIABLE LIST (VIF and TOL)
+
+   NOTE FOR REVIEWERS:
+   PROC LOGISTIC does not produce Variance Inflation Factor (VIF) statistics
+   in this version of SAS.  As a standard workaround, we run PROC REG on the
+   same dependent variable and predictor set for the sole purpose of extracting
+   VIF and Tolerance diagnostics.  The linear regression coefficients themselves
+   are not used or interpreted. */
+
+PROC REG DATA = WORK.Local_Train PLOTS = NONE;
+    MODEL default_flag =
+        /* Continuous and ratio features */
+        employment_length_years
+        num_open_accounts
+        num_delinquencies_2yr
+        total_revolving_balance
+        credit_utilisation_pct
+        months_since_oldest_account
+        num_hard_inquiries_6mo
+        dti_ratio
+        months_since_last_delinquency
+        pct_accounts_current
+        months_at_current_address
+        loan_to_income_ratio
+        credit_risk_index
+        log_annual_income
+        log_loan_amount
+
+        /* Weight-of-Evidence encoded categorical variables */
+        home_ownership_woe
+        loan_purpose_woe
+        email_domain_type_woe
+        phone_verified_woe
+        age_group_woe
+
+        /* Binary engineered indicator flags */
         delinquency_flag
         high_utilisation_flag
         ever_delinquent
-        / selection=stepwise slentry=0.05 slstay=0.05
-          lackfit          /* Hosmer-Lemeshow goodness-of-fit */
-          outroc=WORK.ROC_M1;
 
-    score data=WORK.Local_Val out=WORK.Pred_M1 (keep=applicant_id_hash default_flag P_1);
-    ods output ParameterEstimates = WORK.Betas_M1;
-    title "Model 1 — Stepwise (all 25 predictors)";
-run;
+        / VIF TOL;
 
-/* Rename scored probability column for clarity */
-data WORK.Pred_M1;
-    set WORK.Pred_M1 (rename=(P_1=prob_M1));
-run;
+    TITLE "First VIF check: full variable list (identify variables to remove)";
+QUIT;
 
 
-/* ----------------------------------------------------------------
-   MODEL 2 — BACKWARD ELIMINATION: all 25 predictors, prune back
-   ---------------------------------------------------------------- */
-proc logistic data=WORK.Local_Train descending plots=(roc);
-    model default_flag =
-        age employment_length_years num_open_accounts num_delinquencies_2yr
-        total_revolving_balance credit_utilisation_pct months_since_oldest_account
-        num_hard_inquiries_6mo interest_rate dti_ratio months_since_last_delinquency
-        pct_accounts_current months_at_current_address loan_to_income_ratio
-        credit_risk_index log_annual_income log_loan_amount
-        home_ownership_woe region_woe loan_purpose_woe
-        email_domain_type_woe phone_verified_woe
-        delinquency_flag high_utilisation_flag ever_delinquent
-        / selection=backward slstay=0.05
-          lackfit outroc=WORK.ROC_M2;
+/* SECOND MULTICOLLINEARITY CHECK: CLEANED VARIABLE LIST
 
-    score data=WORK.Local_Val out=WORK.Pred_M2 (keep=applicant_id_hash default_flag P_1);
-    ods output ParameterEstimates = WORK.Betas_M2;
-    title "Model 2 — Backward elimination (all 25 predictors)";
-run;
+   Variables removed after reviewing the first VIF check:
 
-data WORK.Pred_M2;
-    set WORK.Pred_M2 (rename=(P_1=prob_M2));
-run;
+     ever_delinquent             — zero or near-zero variance
+     credit_risk_index           — severe multicollinearity (VIF > 11)
+     months_since_oldest_account — Pearson r = 0.95 with age_group_woe;
+                                   the two variables carry essentially the
+                                   same information.
+
+   This step confirms that the remaining variables all have VIF < 5. */
+
+PROC REG DATA = WORK.Local_Train PLOTS = NONE;
+    MODEL default_flag =
+        /* Continuous and ratio features (cleaned list) */
+        employment_length_years
+        num_open_accounts
+        num_delinquencies_2yr
+        total_revolving_balance
+        credit_utilisation_pct
+        num_hard_inquiries_6mo
+        dti_ratio
+        months_since_last_delinquency
+        pct_accounts_current
+        months_at_current_address
+        loan_to_income_ratio
+        log_annual_income
+        log_loan_amount
+
+        /* Weight-of-Evidence encoded categorical variables */
+        home_ownership_woe
+        loan_purpose_woe
+        email_domain_type_woe
+        phone_verified_woe
+        age_group_woe
+
+        /* Binary engineered indicator flags */
+        delinquency_flag
+        high_utilisation_flag
+
+        / VIF TOL;
+
+    TITLE "Second VIF check: cleaned variable list (all VIF values should be below 5)";
+QUIT;
 
 
-/* ----------------------------------------------------------------
-   MODEL 3 — THEORY-DRIVEN: 17 domain-informed variables
-   Selected based on credit science, not purely data-driven.
-   Delinquency history + utilisation + burden + income signal.
-   ---------------------------------------------------------------- */
-proc logistic data=WORK.Local_Train descending plots=(roc);
-    model default_flag =
-        age
+/* ============================================================================
+   MODEL 1: STEPWISE LOGISTIC REGRESSION
+   ----------------------------------------------------------------------------
+   Note: months_since_oldest_account is included here because its standalone
+   VIF of 4.25 is acceptable; we removed it in the cleaned list only due to
+   its very high correlation with age_group_woe.  Stepwise will resolve the
+   redundancy automatically by selecting at most one of the two.
+
+   Output:
+     WORK.ROC_M1   — ROC curve coordinates
+     WORK.Pred_M1  — Predicted probabilities on Local_Val
+     WORK.Betas_M1 — Model coefficient estimates
+   ============================================================================ */
+
+PROC LOGISTIC DATA = WORK.Local_Train DESCENDING;
+    MODEL default_flag =
+        /* Continuous and ratio features */
+        employment_length_years
+        num_open_accounts
+        num_delinquencies_2yr
+        total_revolving_balance
+        credit_utilisation_pct
+        months_since_oldest_account
+        num_hard_inquiries_6mo
+        dti_ratio
+        months_since_last_delinquency
+        pct_accounts_current
+        months_at_current_address
+        loan_to_income_ratio
+        log_annual_income
+        log_loan_amount
+
+        /* Weight-of-Evidence encoded categorical variables */
+        home_ownership_woe
+        loan_purpose_woe
+        email_domain_type_woe
+        phone_verified_woe
+        age_group_woe
+
+        /* Binary engineered indicator flags */
+        delinquency_flag
+        high_utilisation_flag
+
+        /* Removed: ever_delinquent (zero variance) and credit_risk_index (VIF > 11) */
+
+        / SELECTION = STEPWISE
+          SLENTRY   = 0.05
+          SLSTAY    = 0.05
+          LACKFIT
+          OUTROC    = WORK.ROC_M1;
+
+    SCORE DATA = WORK.Local_Val
+          OUT  = WORK.Pred_M1 (KEEP = applicant_id_hash  default_flag  P_1);
+
+    ODS OUTPUT ParameterEstimates = WORK.Betas_M1;
+
+    TITLE "Model 1: Stepwise logistic regression";
+RUN;
+
+/* Rename the predicted probability column to a model-specific name
+   so we can merge all four models' scores side by side later */
+DATA WORK.Pred_M1;
+    SET WORK.Pred_M1 (RENAME = (P_1 = prob_M1));
+RUN;
+
+
+/* ============================================================================
+   MODEL 2: BACKWARD ELIMINATION LOGISTIC REGRESSION
+   ----------------------------------------------------------------------------
+   Output:
+     WORK.ROC_M2   — ROC curve coordinates
+     WORK.Pred_M2  — Predicted probabilities on Local_Val
+     WORK.Betas_M2 — Model coefficient estimates
+   ============================================================================ */
+
+PROC LOGISTIC DATA = WORK.Local_Train DESCENDING;
+    MODEL default_flag =
+        /* Continuous and ratio features */
+        employment_length_years
+        num_open_accounts
+        num_delinquencies_2yr
+        total_revolving_balance
+        credit_utilisation_pct
+        months_since_oldest_account
+        num_hard_inquiries_6mo
+        dti_ratio
+        months_since_last_delinquency
+        pct_accounts_current
+        months_at_current_address
+        loan_to_income_ratio
+        log_annual_income
+        log_loan_amount
+
+        /* Weight-of-Evidence encoded categorical variables */
+        home_ownership_woe
+        loan_purpose_woe
+        email_domain_type_woe
+        phone_verified_woe
+        age_group_woe
+
+        /* Binary engineered indicator flags */
+        delinquency_flag
+        high_utilisation_flag
+
+        /* Removed: ever_delinquent (zero variance) and credit_risk_index (VIF > 11) */
+
+        / SELECTION = BACKWARD
+          SLSTAY    = 0.05
+          LACKFIT
+          OUTROC    = WORK.ROC_M2;
+
+    SCORE DATA = WORK.Local_Val
+          OUT  = WORK.Pred_M2 (KEEP = applicant_id_hash  default_flag  P_1);
+
+    ODS OUTPUT ParameterEstimates = WORK.Betas_M2;
+
+    TITLE "Model 2: Backward elimination logistic regression";
+RUN;
+
+DATA WORK.Pred_M2;
+    SET WORK.Pred_M2 (RENAME = (P_1 = prob_M2));
+RUN;
+
+
+/* ============================================================================
+   MODEL 3: THEORY-DRIVEN LOGISTIC REGRESSION
+   ----------------------------------------------------------------------------
+   Variable selection method: None — all 16 variables are forced into the model
+   based on credit-risk domain knowledge.
+
+   Output:
+     WORK.ROC_M3   — ROC curve coordinates
+     WORK.Pred_M3  — Predicted probabilities on Local_Val
+     WORK.Betas_M3 — Model coefficient estimates
+   ============================================================================ */
+
+PROC LOGISTIC DATA = WORK.Local_Train DESCENDING;
+    MODEL default_flag =
         employment_length_years
         num_open_accounts
         num_delinquencies_2yr
         credit_utilisation_pct
         months_since_oldest_account
         num_hard_inquiries_6mo
-        interest_rate
         dti_ratio
         months_since_last_delinquency
         pct_accounts_current
         home_ownership_woe
         loan_purpose_woe
+        age_group_woe
         loan_to_income_ratio
         delinquency_flag
         high_utilisation_flag
         log_annual_income
-        / lackfit outroc=WORK.ROC_M3;
 
-    score data=WORK.Local_Val out=WORK.Pred_M3 (keep=applicant_id_hash default_flag P_1);
-    ods output ParameterEstimates = WORK.Betas_M3;
-    title "Model 3 — Theory-driven (17 domain variables)";
-run;
+        / LACKFIT
+          OUTROC = WORK.ROC_M3;
 
-data WORK.Pred_M3;
-    set WORK.Pred_M3 (rename=(P_1=prob_M3));
-run;
+    SCORE DATA = WORK.Local_Val
+          OUT  = WORK.Pred_M3 (KEEP = applicant_id_hash  default_flag  P_1);
+
+    ODS OUTPUT ParameterEstimates = WORK.Betas_M3;
+
+    TITLE "Model 3: Theory-driven logistic regression";
+RUN;
+
+DATA WORK.Pred_M3;
+    SET WORK.Pred_M3 (RENAME = (P_1 = prob_M3));
+RUN;
 
 
-/* ----------------------------------------------------------------
-   MODEL 4 — PARSIMONIOUS LEAN: 8 strongest predictors only
-   Purpose: establish a clean baseline; also the most interpretable.
-   ---------------------------------------------------------------- */
-proc logistic data=WORK.Local_Train descending plots=(roc);
-    model default_flag =
+/* ============================================================================
+   MODEL 4: PARSIMONIOUS LEAN LOGISTIC REGRESSION
+   ----------------------------------------------------------------------------
+   Variable selection method: None — 7 variables are forced into the model.
+
+   This model uses only the 7 strongest predictors identified from the
+   correlation matrix, stepwise and backward output.
+
+   Output:
+     WORK.ROC_M4   — ROC curve coordinates
+     WORK.Pred_M4  — Predicted probabilities on Local_Val
+     WORK.Betas_M4 — Model coefficient estimates
+   ============================================================================ */
+
+PROC LOGISTIC DATA = WORK.Local_Train DESCENDING;
+    MODEL default_flag =
         credit_utilisation_pct
         dti_ratio
         num_delinquencies_2yr
         months_since_last_delinquency
         delinquency_flag
-        interest_rate
         log_annual_income
         loan_to_income_ratio
-        / lackfit outroc=WORK.ROC_M4;
 
-    score data=WORK.Local_Val out=WORK.Pred_M4 (keep=applicant_id_hash default_flag P_1);
-    ods output ParameterEstimates = WORK.Betas_M4;
-    title "Model 4 — Lean (8 core predictors)";
-run;
+        / LACKFIT
+          OUTROC = WORK.ROC_M4;
 
-data WORK.Pred_M4;
-    set WORK.Pred_M4 (rename=(P_1=prob_M4));
-run;
+    SCORE DATA = WORK.Local_Val
+          OUT  = WORK.Pred_M4 (KEEP = applicant_id_hash  default_flag  P_1);
 
+    ODS OUTPUT ParameterEstimates = WORK.Betas_M4;
 
-/* ====================================================================
-   SECTION 5 — VALIDATION DIAGNOSTICS
-   Compute AUC, KS, Gini, and decile lift for EVERY model.
-   Always evaluate on Local_Val — NEVER peek at Test here.
-   ==================================================================== */
+    TITLE "Model 4: Parsimonious lean logistic regression (7 strongest predictors only)";
+RUN;
 
-/* ---- 5a: AUC (c-statistic) from ROC datasets ---- */
-/* PROC LOGISTIC writes the ROC table; max(_c_) = AUC              */
-proc sql;
-    create table WORK.AUC_Summary as
-    select 'M1 Stepwise'   as Model, max(_c_) as AUC format=8.4 from WORK.ROC_M1 union all
-    select 'M2 Backward'          , max(_c_)           from WORK.ROC_M2 union all
-    select 'M3 Theory-driven'     , max(_c_)           from WORK.ROC_M3 union all
-    select 'M4 Lean'              , max(_c_)           from WORK.ROC_M4
-    order by AUC desc;
-quit;
-
-proc print data=WORK.AUC_Summary noobs;
-    title "AUC comparison — all four candidate models on Local_Val";
-run;
+DATA WORK.Pred_M4;
+    SET WORK.Pred_M4 (RENAME = (P_1 = prob_M4));
+RUN;
 
 
-/* ---- 5b: KS statistic ----
-   KS = maximum vertical separation between cumulative event and
-   non-event distributions across score ranks.
-   In credit: KS > 30 = acceptable; KS > 40 = good.             */
-
-%macro ks_stat(pred=, prob=, label=);
-    proc npar1way data=&pred edf noprint;
-        class default_flag;
-        var &prob;
-        ods output KSStatistic = _ks_;
-    run;
-    data _ks_;
-        set _ks_;
-        where Label1 = 'D';         /* D statistic = KS */
-        KS_pct = nValue1 * 100;
-        Model  = "&label";
-    run;
-    proc append base=WORK.KS_All data=_ks_ force; run;
-%mend;
-
-proc delete data=WORK.KS_All; run;
-
-%ks_stat(pred=WORK.Pred_M1, prob=prob_M1, label=M1 Stepwise);
-%ks_stat(pred=WORK.Pred_M2, prob=prob_M2, label=M2 Backward);
-%ks_stat(pred=WORK.Pred_M3, prob=prob_M3, label=M3 Theory-driven);
-%ks_stat(pred=WORK.Pred_M4, prob=prob_M4, label=M4 Lean);
-
-proc print data=WORK.KS_All (keep=Model KS_pct) noobs;
-    title "KS statistic — all four models on Local_Val";
-run;
+/* ============================================================================
+   SECTION 2 — VALIDATION DIAGNOSTICS
+   ============================================================================ */
 
 
-/* ---- 5c: Gini coefficient ----
-   Gini = 2 × AUC − 1.
-   Equivalent to the area between the Lorenz curve and the diagonal.
-   A Gini of 0.40 = AUC of 0.70.                                  */
-data WORK.Gini_Summary;
-    set WORK.AUC_Summary;
-    Gini = round((2 * AUC - 1), 0.0001);
-    format Gini 8.4;
-run;
+/* ----------------------------------------------------------------------------
+   — AUC (c-STATISTIC) VIA TRAPEZOIDAL INTEGRATION
+   ----------------------------------------------------------------------------
+   The goal is to compute AUC ourselves using the trapezoidal rule:
+     AUC = sum of (width along x-axis) * (average height between adjacent points)
+   where x = 1 - Specificity and y = Sensitivity.
 
-proc print data=WORK.Gini_Summary noobs;
-    title "AUC and Gini — all four models";
-run;
+   This is mathematically equivalent to the Wilcoxon-Mann-Whitney statistic and
+   matches the c-statistic that PROC LOGISTIC reports in its Association table.
+   ---------------------------------------------------------------------------- */
 
+%MACRO compute_auc (roc_dataset = , model_label = );
 
-/* ---- 5d: Decile lift table ----
-   Ranks scored validation records into 10 equal groups.
-   Shows how much better each model is than random in the top deciles.
-   A good model captures > 30% of all defaults in decile 1.         */
+    /* Sort the ROC coordinates by x-axis (1 - Specificity) ascending.
+       This ensures the trapezoidal integration sweeps left to right. */
+    PROC SORT DATA = &roc_dataset
+              OUT  = _roc_sorted_ (KEEP = _sensit_  _1mspec_);
+        BY _1mspec_  _sensit_;
+    RUN;
 
-%macro decile_lift(pred=, prob=, label=);
-    proc rank data=&pred out=_ranked_ descending groups=10;
-        var &prob;
-        ranks decile_rank;
-    run;
+    /* Apply the trapezoidal rule row by row using a retained running total */
+    DATA _one_auc_row_;
+        SET _roc_sorted_ END = last_row;
 
-    proc sql;
-        create table _lift_ as
-        select
-            (decile_rank + 1)                                         as Decile,
-            count(*)                                                  as N,
-            sum(default_flag)                                         as Events,
-            sum(default_flag) / count(*)                              as Event_Rate,
-            (sum(default_flag) / (select sum(default_flag) from _ranked_)) as Pct_Defaults_Captured,
-            (sum(default_flag) / count(*)) /
-                (select mean(default_flag) from _ranked_)            as Lift
-        from _ranked_
-        group by decile_rank
-        order by Decile;
-    quit;
+        RETAIN running_auc  0
+               previous_x   0
+               previous_y   0;
 
-    data _lift_;
-        set _lift_;
-        Model = "&label";
-        format Event_Rate Pct_Defaults_Captured percent8.2  Lift 8.2;
-    run;
+        /* Trapezoidal area for this step:
+             width         = current x - previous x
+             average height = (current y + previous y) / 2 */
+        running_auc + ( (_1mspec_ - previous_x) * (_sensit_ + previous_y) / 2 );
 
-    proc print data=_lift_ noobs;
-        title "Decile lift — &label";
-    run;
-%mend;
+        previous_x = _1mspec_;
+        previous_y = _sensit_;
 
-%decile_lift(pred=WORK.Pred_M1, prob=prob_M1, label=M1 Stepwise);
-%decile_lift(pred=WORK.Pred_M2, prob=prob_M2, label=M2 Backward);
-%decile_lift(pred=WORK.Pred_M3, prob=prob_M3, label=M3 Theory-driven);
-%decile_lift(pred=WORK.Pred_M4, prob=prob_M4, label=M4 Lean);
+        /* Write a single summary row when we reach the last observation */
+        IF last_row THEN DO;
+            Model = "&model_label";
+            AUC   = ROUND(running_auc, 0.0001);
+            OUTPUT;
+        END;
 
+        KEEP Model  AUC;
+        FORMAT AUC 8.4;
+    RUN;
 
-/* ---- 5e: Hosmer-Lemeshow calibration summary ----
-   Already printed by PROC LOGISTIC (lackfit option above).
-   Here we also compute mean predicted vs actual by decile
-   to visually confirm calibration.
-   A well-calibrated model has p_predicted ≈ p_actual per group.  */
+    /* Append this model's result to the summary table */
+    PROC APPEND BASE = WORK.AUC_Summary  DATA = _one_auc_row_  FORCE;
+    RUN;
 
-%macro calibration_check(pred=, prob=, label=);
-    proc rank data=&pred out=_cal_ groups=10;
-        var &prob;
-        ranks cal_decile;
-    run;
-    proc sql;
-        create table WORK.Cal_&label. as
-        select
-            cal_decile + 1                  as Decile,
-            count(*)                        as N,
-            mean(&prob)                     as Mean_Predicted format=percent8.2,
-            mean(default_flag)              as Mean_Actual    format=percent8.2,
-            abs(mean(&prob)-mean(default_flag)) as Abs_Error  format=8.4
-        from _cal_
-        group by cal_decile
-        order by Decile;
-    quit;
-    proc print data=WORK.Cal_&label. noobs;
-        title "Calibration check — &label (predicted vs actual by decile)";
-    run;
-%mend;
+    /* Remove temporary working datasets */
+    PROC DELETE DATA = _roc_sorted_  _one_auc_row_;
+    RUN;
 
-/* Run on the best-performing model after reviewing AUC table */
-/* Replace M3 with whichever model wins */
-%calibration_check(pred=WORK.Pred_M3, prob=prob_M3, label=M3);
+%MEND compute_auc;
 
 
-/* ---- 5f: Multicollinearity check (VIF) on chosen model's variables ----
-   VIF > 5 = concern; VIF > 10 = drop or merge variables.
-   Use this before finalising the variable list.                    */
+/* Reset the summary table before populating it */
+PROC DELETE DATA = WORK.AUC_Summary;
+RUN;
 
-proc reg data=WORK.Local_Train;
-    model default_flag =
-        age employment_length_years num_open_accounts num_delinquencies_2yr
-        credit_utilisation_pct months_since_oldest_account
-        num_hard_inquiries_6mo interest_rate dti_ratio months_since_last_delinquency
-        pct_accounts_current home_ownership_woe loan_purpose_woe
-        loan_to_income_ratio delinquency_flag high_utilisation_flag log_annual_income
-        / vif tol;
-    title "VIF / tolerance — Model 3 variable set (want VIF < 5)";
-run;
-quit;
+/* Run the macro for each of the four candidate models */
+%compute_auc (roc_dataset = WORK.ROC_M1,  model_label = M1 Stepwise);
+%compute_auc (roc_dataset = WORK.ROC_M2,  model_label = M2 Backward);
+%compute_auc (roc_dataset = WORK.ROC_M3,  model_label = M3 Theory-driven);
+%compute_auc (roc_dataset = WORK.ROC_M4,  model_label = M4 Lean);
+
+/* Sort by AUC descending so the best model appears at the top */
+PROC SORT DATA = WORK.AUC_Summary;
+    BY DESCENDING AUC;
+RUN;
+
+PROC PRINT DATA = WORK.AUC_Summary NOOBS;
+    TITLE "Step 5a — AUC (c-statistic) comparison: all four candidate models evaluated on Local_Val";
+RUN;
 
 
-/* ====================================================================
-   SECTION 6 — FINAL MODEL ON 100% OF WORK.TRAIN
-   After choosing the winner from Section 5, retrain on ALL of Train.
-   This gives the model maximum data before scoring the blind test set.
+/* ----------------------------------------------------------------------------
+    — KOLMOGOROV-SMIRNOV (KS) STATISTIC
+   ----------------------------------------------------------------------------
+   The KS statistic measures the maximum vertical distance between the
+   cumulative distribution functions of predicted probabilities for defaulters
+   (default_flag = 1) and non-defaulters (default_flag = 0).
 
-   IMPORTANT: replace the variable list below with the variables from
-   YOUR winning model. The example uses the M3 theory-driven set.
-   ==================================================================== */
+   Interpretation:
+     KS > 20  = minimum acceptable for a deployed credit scorecard
+     KS > 30  = good separation between defaulters and non-defaulters
+     KS > 40  = very strong model performance
+   ---------------------------------------------------------------------------- */
 
-/* Step 6a: Capture betas for the report */
-ods output ParameterEstimates = WORK.Final_Betas;
+%MACRO compute_ks (predictions_dataset  = ,
+                   probability_variable = ,
+                   model_label          = );
 
-proc logistic data=WORK.Train descending plots=(roc);
+    /* CLASS = default_flag splits observations into two groups:
+         Group 0 = non-defaulters
+         Group 1 = defaulters
+       VAR = the predicted probability we want to evaluate.
+       NOPRINT is intentionally omitted so ODS OUTPUT can work. */
+    PROC NPAR1WAY DATA = &predictions_dataset  EDF;
+        CLASS default_flag;
+        VAR   &probability_variable;
+        ODS OUTPUT KSStatistic = _ks_output_;
+    RUN;
 
-    /* === PASTE YOUR WINNING MODEL VARIABLE LIST HERE === */
-    model default_flag =
-        age
+    /* Label1 = 'D' identifies the row holding the maximum
+       absolute difference — the KS D-statistic we need. */
+    DATA _ks_summary_;
+        SET _ks_output_;
+        WHERE Label1 = 'D';
+        KS_Statistic_Pct = nValue1 * 100;    /* Convert decimal to percentage */
+        Model            = "&model_label";
+        KEEP Model  KS_Statistic_Pct;
+        FORMAT KS_Statistic_Pct 8.2;
+    RUN;
+
+    PROC APPEND BASE = WORK.KS_All  DATA = _ks_summary_  FORCE;
+    RUN;
+
+    PROC DELETE DATA = _ks_output_  _ks_summary_;
+    RUN;
+
+%MEND compute_ks;
+
+
+/* Initialise a fresh summary table with explicit column lengths
+   to prevent variable-length truncation warnings on PROC APPEND */
+DATA WORK.KS_All;
+    LENGTH Model $20.;
+    KS_Statistic_Pct = .;
+    DELETE;    /* Creates the table structure without writing any rows */
+RUN;
+
+%compute_ks (predictions_dataset = WORK.Pred_M1,
+             probability_variable = prob_M1,
+             model_label          = M1 Stepwise);
+
+%compute_ks (predictions_dataset = WORK.Pred_M2,
+             probability_variable = prob_M2,
+             model_label          = M2 Backward);
+
+%compute_ks (predictions_dataset = WORK.Pred_M3,
+             probability_variable = prob_M3,
+             model_label          = M3 Theory-driven);
+
+%compute_ks (predictions_dataset = WORK.Pred_M4,
+             probability_variable = prob_M4,
+             model_label          = M4 Lean);
+
+PROC PRINT DATA = WORK.KS_All  NOOBS;
+    TITLE "KS statistic comparison: all four candidate models evaluated on Local_Val";
+RUN;
+
+
+/* ----------------------------------------------------------------------------
+    — GINI COEFFICIENT
+   ----------------------------------------------------------------------------
+   The Gini coefficient is a linear transformation of AUC:
+     Gini = 2 * AUC - 1
+
+   It expresses model discriminatory power on a scale from 0 (random model)
+   to 1 (perfect model).  In credit scoring, Gini > 0.40 (AUC > 0.70) is
+   generally required for a model to be considered acceptable.
+
+   We derive Gini directly from the AUC_Summary table.
+   ---------------------------------------------------------------------------- */
+
+DATA WORK.Gini_Summary;
+    SET WORK.AUC_Summary;
+    Gini = ROUND((2 * AUC - 1), 0.0001);
+    FORMAT Gini 8.4;
+RUN;
+
+PROC PRINT DATA = WORK.Gini_Summary NOOBS;
+    TITLE " AUC and Gini coefficient comparison: all four candidate models evaluated on Local_Val";
+RUN;
+
+
+/* ----------------------------------------------------------------------------
+    — DECILE LIFT TABLE
+   ----------------------------------------------------------------------------
+   The decile lift table answers the question:
+   "If we target only the top X% of applicants ranked by predicted default
+    probability, what proportion of all defaults do we capture?"
+
+   How it works:
+     1. Rank all Local_Val applicants by predicted probability (descending).
+     2. Divide them into 10 equally sized groups (deciles).
+     3. For each decile, compute the event rate and lift relative to random.
+
+   What to look for:
+     - Decile 1 (highest predicted risk) should contain a disproportionately
+       large share of actual defaults.
+     - Lift in decile 1 should ideally be 3x or higher relative to the overall
+       default rate.
+   ---------------------------------------------------------------------------- */
+
+%MACRO compute_decile_lift (predictions_dataset = , probability_variable = , model_label = );
+
+    /* Rank applicants by predicted probability, highest risk first */
+    PROC RANK DATA  = &predictions_dataset
+              OUT   = _ranked_applicants_
+              DESCENDING
+              GROUPS = 10;
+        VAR   &probability_variable;
+        RANKS decile_rank;
+    RUN;
+
+    /* Compute event rate and lift for each decile */
+    PROC SQL;
+        CREATE TABLE _lift_table_ AS
+        SELECT
+            (decile_rank + 1)                                          AS Decile,
+            COUNT(*)                                                   AS Number_of_Applicants,
+            SUM(default_flag)                                          AS Number_of_Defaults,
+            SUM(default_flag) / COUNT(*)                               AS Default_Event_Rate,
+            SUM(default_flag) /
+                (SELECT SUM(default_flag) FROM _ranked_applicants_)    AS Pct_of_All_Defaults_Captured,
+            (SUM(default_flag) / COUNT(*)) /
+                (SELECT MEAN(default_flag) FROM _ranked_applicants_)   AS Lift_vs_Random
+        FROM  _ranked_applicants_
+        GROUP BY decile_rank
+        ORDER BY Decile;
+    QUIT;
+
+    DATA _lift_table_;
+        SET _lift_table_;
+        Model = "&model_label";
+        FORMAT Default_Event_Rate  Pct_of_All_Defaults_Captured  PERCENT8.2
+               Lift_vs_Random      8.2;
+    RUN;
+
+    PROC PRINT DATA = _lift_table_  NOOBS;
+        TITLE "Decile lift table: &model_label (evaluated on Local_Val)";
+    RUN;
+
+    PROC DELETE DATA = _ranked_applicants_  _lift_table_;
+    RUN;
+
+%MEND compute_decile_lift;
+
+%compute_decile_lift (predictions_dataset = WORK.Pred_M1,  probability_variable = prob_M1,  model_label = M1 Stepwise);
+%compute_decile_lift (predictions_dataset = WORK.Pred_M2,  probability_variable = prob_M2,  model_label = M2 Backward);
+%compute_decile_lift (predictions_dataset = WORK.Pred_M3,  probability_variable = prob_M3,  model_label = M3 Theory-driven);
+%compute_decile_lift (predictions_dataset = WORK.Pred_M4,  probability_variable = prob_M4,  model_label = M4 Lean);
+
+
+/* ----------------------------------------------------------------------------
+    — CALIBRATION CHECK (PREDICTED PROBABILITY vs ACTUAL DEFAULT RATE)
+   ----------------------------------------------------------------------------
+   Calibration tells you whether the model's predicted probabilities are
+   accurate on an absolute scale — not just whether it ranks applicants
+   correctly.
+
+   A well-calibrated model should show:
+     Mean_Predicted ≈ Mean_Actual  across all deciles
+     Abs_Error < 0.02             for most deciles
+
+   If the model consistently over-predicts or under-predicts in certain
+   probability ranges, the Hosmer-Lemeshow test (LACKFIT in PROC LOGISTIC)
+   will also flag this with a p-value below 0.05.
+   ---------------------------------------------------------------------------- */
+
+%MACRO compute_calibration (predictions_dataset = , probability_variable = , model_label = );
+
+    /* Rank by predicted probability ascending (low to high risk) for calibration */
+    PROC RANK DATA  = &predictions_dataset
+              OUT   = _calibration_data_
+              GROUPS = 10;
+        VAR &probability_variable;
+        RANKS calibration_decile;
+    RUN;
+
+    PROC SQL;
+        CREATE TABLE WORK.Calibration_&model_label. AS
+        SELECT
+            (calibration_decile + 1)             AS Decile,
+            COUNT(*)                             AS Number_of_Applicants,
+            MEAN(&probability_variable)          AS Mean_Predicted_Probability  FORMAT = PERCENT8.2,
+            MEAN(default_flag)                   AS Mean_Actual_Default_Rate    FORMAT = PERCENT8.2,
+            ABS(MEAN(&probability_variable)
+                - MEAN(default_flag))            AS Absolute_Error              FORMAT = 8.4
+        FROM  _calibration_data_
+        GROUP BY calibration_decile
+        ORDER BY Decile;
+    QUIT;
+
+    PROC PRINT DATA = WORK.Calibration_&model_label.  NOOBS;
+        TITLE "Calibration check: &model_label (predicted probability vs actual default rate by decile)";
+    RUN;
+
+    PROC DELETE DATA = _calibration_data_;
+    RUN;
+
+%MEND compute_calibration;
+
+%compute_calibration (predictions_dataset = WORK.Pred_M1,  probability_variable = prob_M1,  model_label = M1);
+%compute_calibration (predictions_dataset = WORK.Pred_M2,  probability_variable = prob_M2,  model_label = M2);
+%compute_calibration (predictions_dataset = WORK.Pred_M3,  probability_variable = prob_M3,  model_label = M3);
+%compute_calibration (predictions_dataset = WORK.Pred_M4,  probability_variable = prob_M4,  model_label = M4);
+
+
+
+
+/* ============================================================================
+   SECTION 3 — FINAL MODEL TRAINED ON 100% OF WORK.TRAIN
+   ----------------------------------------------------------------------------
+   After reviewing the Section 2 diagnostics,we select the  winning model and
+   retrain it on the full WORK.Train dataset
+   ============================================================================ */
+
+/*  Train the final model and score the blind test set  */
+
+/* Capture the model coefficient estimates*/
+ODS OUTPUT ParameterEstimates = WORK.Final_Model_Betas;
+
+PROC LOGISTIC DATA = WORK.Train  DESCENDING  PLOTS = (ROC);
+
+    MODEL default_flag =
         employment_length_years
         num_open_accounts
         num_delinquencies_2yr
         credit_utilisation_pct
         months_since_oldest_account
         num_hard_inquiries_6mo
-        interest_rate
-        dti_ratio
+        dti_ratio                         
         months_since_last_delinquency
         pct_accounts_current
+		loan_to_income_ratio
+		log_annual_income
         home_ownership_woe
-        loan_purpose_woe
-        loan_to_income_ratio
+        age_group_woe
         delinquency_flag
         high_utilisation_flag
-        log_annual_income
-        / lackfit outroc=WORK.ROC_Final;
 
-    /* Score the blind test set in the same PROC call */
-    score data=WORK.Test out=WORK.Hackathon_Submission;
-    title "Final model — trained on 100% of Work.Train, scored on Work.Test";
-run;
+        / LACKFIT
+          OUTROC = WORK.ROC_Final;
 
-ods output close;
+               
+    SCORE DATA = WORK.Test
+          OUT  = WORK.Dataquest_Submission;
 
-/* Step 6b: Print final coefficients */
-proc print data=WORK.Final_Betas;
-    title "Final model — parameter estimates (betas)";
-run;
+    TITLE "Final model trained on 100% of Work.Train and scored on Work.Test";
+RUN;
 
-/* Step 6c: Compute odds ratios for interpretability report */
-proc logistic data=WORK.Train descending;
-    model default_flag =
-        age employment_length_years num_open_accounts num_delinquencies_2yr
-        credit_utilisation_pct months_since_oldest_account
-        num_hard_inquiries_6mo interest_rate dti_ratio months_since_last_delinquency
-        pct_accounts_current home_ownership_woe loan_purpose_woe
-        loan_to_income_ratio delinquency_flag high_utilisation_flag log_annual_income;
-    oddsratio / cl=wald;
-    title "Final model — odds ratios with 95% Wald confidence intervals";
-run;
+ODS OUTPUT CLOSE;
 
 
-/* ====================================================================
-   SECTION 7 — FORMAT AND VERIFY SUBMISSION FILE
-   ==================================================================== */
+/* Print the final model coefficients for the report */
 
-/* Keep only what is needed: applicant ID + predicted probability */
-data WORK.Submission_Final;
-    set WORK.Hackathon_Submission;
+PROC PRINT DATA = WORK.Final_Model_Betas;
+    TITLE " Final model: parameter estimates (beta coefficients)";
+RUN;
+
+
+
+/* ============================================================================
+   SECTION 4 FORMAT AND VERIFY THE SUBMISSION FILE
+   ----------------------------------------------------------------------------
+   The submission requires two columns:
+     applicant_id_hash      — unique applicant identifier (kept from test set)
+     default_probability    — predicted probability of default (0 to 1)
+
+   Three sanity checks are run:
+     1. Probability range check: no value should be below 0 or above 1.
+     2. Row count check: the submission should have exactly as many rows as
+        WORK.Test.
+     3. Preview: print the first 20 rows for a visual spot-check.
+   ============================================================================ */
+
+DATA WORK.Submission_Final;
+    SET WORK.Dataquest_Submission;
     default_probability = P_1;
-    keep applicant_id_hash default_probability;
-    format default_probability 8.6;
-run;
-
-/* Quick sanity checks on the submission */
-proc means data=WORK.Submission_Final n nmiss min mean max;
-    var default_probability;
-    title "Submission sanity check — predicted probabilities";
-run;
-
-/* All probabilities must be between 0 and 1 */
-proc sql;
-    select count(*) as Out_of_Range
-    from WORK.Submission_Final
-    where default_probability < 0 or default_probability > 1;
-    title "Rows with invalid probability (should be 0)";
-quit;
-
-/* Confirm test row count matches raw test set */
-proc sql;
-    select count(*) as Submission_Rows from WORK.Submission_Final;
-    select count(*) as Test_Rows        from WORK.Test;
-    title "Row count check — submission vs test set";
-quit;
-
-/* Print first 20 rows to visually confirm layout */
-proc print data=WORK.Submission_Final (obs=20);
-    title "Submission file — first 20 rows";
-run;
+    KEEP applicant_id_hash  default_probability;
+    FORMAT default_probability 8.6;
+RUN;
 
 
-/* ====================================================================
-   SECTION 8 — MODEL SUMMARY TABLE FOR REPORT
-   Consolidate all metrics into a single comparison table.
-   Fill in the metric values after running Sections 4 and 5.
-   ==================================================================== */
-
-data WORK.Model_Report;
-    infile datalines dlm='|';
-    input Model $30. Variables AUC_Val 8.4 KS_Val 8.2 Gini 8.4 HL_pval 8.4;
-    datalines;
-Baseline (original code)       | 17 | 0.6800 | .    | 0.3600 | .
-M1 Stepwise (all 25)           |  . | .      | .    | .      | .
-M2 Backward (all 25)           |  . | .      | .    | .      | .
-M3 Theory-driven (17)          | 17 | .      | .    | .      | .
-M4 Lean (8)                    |  8 | .      | .    | .      | .
-Final (winner retrained)       |  . | .      | .    | .      | .
-;
-run;
-
-/* Replace the dots above with your actual metric values, then print */
-proc print data=WORK.Model_Report noobs;
-    title "Model comparison summary — fill in from Section 5 output";
-run;
+/* Sanity check 1: summary statistics on the predicted probabilities */
+PROC MEANS DATA = WORK.Submission_Final  N  NMISS  MIN  MEAN  MAX;
+    VAR default_probability;
+    TITLE " Submission sanity check: summary statistics on predicted probabilities";
+RUN;
 
 
-/* ====================================================================
-   NOTES — HOW TO INTERPRET RESULTS
-   ====================================================================
-   AUC (c-statistic):
-     0.50 = random | 0.68 = baseline | 0.70+ = improvement | 0.82 = LGBM ceiling
-     Read directly from the ROC dataset: max(_c_)
+/* Sanity check 2: count rows outside the valid [0, 1] range (result should be 0) */
+PROC SQL;
+    SELECT COUNT(*) AS Rows_Outside_Valid_Range
+    FROM WORK.Submission_Final
+    WHERE default_probability < 0
+       OR default_probability > 1;
+    TITLE "Rows with invalid probability value (this count must equal 0)";
+QUIT;
 
-   KS statistic:
-     KS > 30 = acceptable for credit scoring
-     KS > 40 = good
-     Printed by %ks_stat macro above
 
-   Gini coefficient:
-     Gini = 2 × AUC − 1
-     Gini > 0.40 means AUC > 0.70
+/* Sanity check 3: confirm the submission has the same row count as WORK.Test */
+PROC SQL;
+    SELECT COUNT(*) AS Submission_Row_Count FROM WORK.Submission_Final;
+    SELECT COUNT(*) AS Test_Set_Row_Count    FROM WORK.Test;
+    TITLE " Row count verification: submission file must match the test set exactly";
+QUIT;
 
-   Hosmer-Lemeshow (lackfit):
-     p > 0.05 = model is well-calibrated (good)
-     p < 0.05 = systematic mismatch between predicted and actual rates
 
-   Decile lift:
-     Decile 1 (highest-risk) should capture > 3x the random default rate
-     "Pct_Defaults_Captured" in decile 1 should be > 25-30% for a good model
+/* Preview: print the first 20 rows of the submission file for a visual check */
+PROC PRINT DATA = WORK.Submission_Final (OBS = 20);
+    TITLE " Submission file preview: first 20 rows";
+RUN;
 
-   Variable sign check — each beta should match credit theory:
-     credit_utilisation_pct      → POSITIVE (higher util = more risk)
-     dti_ratio                   → POSITIVE (higher burden = more risk)
-     interest_rate               → POSITIVE (riskier borrowers get higher rates)
-     num_delinquencies_2yr       → POSITIVE (more delinquencies = more risk)
-     months_since_last_delinquency → NEGATIVE (longer ago = safer)
-     pct_accounts_current        → NEGATIVE (more current accounts = safer)
-     log_annual_income           → NEGATIVE (higher income = safer)
-     delinquency_flag            → POSITIVE (1 = has delinquency = more risk)
-     high_utilisation_flag       → POSITIVE (1 = maxed credit = more risk)
 
-   If any beta sign is OPPOSITE to the above, that variable has a
-   monotonicity problem — investigate before using it.
-   ==================================================================== */
+ODS RTF CLOSE;
+
+
