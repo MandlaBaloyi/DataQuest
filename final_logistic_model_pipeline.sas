@@ -1,4 +1,4 @@
-ODS GRAPHICS OFF;  /* Prevent Java OOM crash from rendering large ROC plots */
+ ODS GRAPHICS OFF;  /* Prevent Java OOM crash from rendering large ROC plots */
 ODS RTF;
 
 /* ============================================================================
@@ -557,7 +557,7 @@ PROC SORT DATA = WORK.AUC_Summary;
 RUN;
 
 PROC PRINT DATA = WORK.AUC_Summary NOOBS;
-    TITLE "Step 5a — AUC (c-statistic) comparison: all four candidate models evaluated on Local_Val";
+    TITLE "AUC (c-statistic) comparison: all four candidate models evaluated on Local_Val";
 RUN;
 
 
@@ -894,5 +894,3 @@ RUN;
 
 
 ODS RTF CLOSE;
-
-
