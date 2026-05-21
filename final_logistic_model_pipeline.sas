@@ -1,4 +1,5 @@
- ODS GRAPHICS OFF;  /* Prevent Java OOM crash from rendering large ROC plots */
+/* Prevent Java OOM crash when rendering large ROC plots */
+ODS GRAPHICS OFF;  /* Visualization of ROC plots. Remove this line to enable and display ROC plots when running each code cell. */
 ODS RTF;
 
 /* ============================================================================
@@ -106,7 +107,7 @@ QUIT;
 
 DATA WORK.Local_Train  WORK.Local_Val;
     SET WORK.Train;
-    CALL STREAMINIT(2024);          /* Fix the random seed for reproducibility */
+    CALL STREAMINIT(2024);         
 
     IF   RAND('uniform') <= 0.80 THEN OUTPUT WORK.Local_Train;
     ELSE                              OUTPUT WORK.Local_Val;
@@ -131,7 +132,7 @@ PROC SQL;
         MEAN(default_flag)
     FROM WORK.Local_Val;
 
-    TITLE "Local Train / Validation split verification (80% / 20%)";
+    TITLE "Local Train & Validation split verification (80% & 20%)";
 QUIT;
 
 
@@ -323,7 +324,7 @@ PROC LOGISTIC DATA = WORK.Local_Train DESCENDING;
 
     ODS OUTPUT ParameterEstimates = WORK.Betas_M1;
 
-    TITLE "Model 1: Stepwise logistic regression";
+    TITLE "Model 1: Stepwise lLogistic Regression";
 RUN;
 
 /* Rename the predicted probability column to a model-specific name
@@ -383,12 +384,13 @@ PROC LOGISTIC DATA = WORK.Local_Train DESCENDING;
 
     ODS OUTPUT ParameterEstimates = WORK.Betas_M2;
 
-    TITLE "Model 2: Backward elimination logistic regression";
+    TITLE "Model 2: Backward Elimination Logistic Regression";
 RUN;
 
 DATA WORK.Pred_M2;
     SET WORK.Pred_M2 (RENAME = (P_1 = prob_M2));
 RUN;
+
 
 
 /* ============================================================================
@@ -430,7 +432,7 @@ PROC LOGISTIC DATA = WORK.Local_Train DESCENDING;
 
     ODS OUTPUT ParameterEstimates = WORK.Betas_M3;
 
-    TITLE "Model 3: Theory-driven logistic regression";
+    TITLE "Model 3: Theory-Driven Logistic Regression";
 RUN;
 
 DATA WORK.Pred_M3;
@@ -470,7 +472,7 @@ PROC LOGISTIC DATA = WORK.Local_Train DESCENDING;
 
     ODS OUTPUT ParameterEstimates = WORK.Betas_M4;
 
-    TITLE "Model 4: Parsimonious lean logistic regression (7 strongest predictors only)";
+    TITLE "Model 4: Parsimonious Lean Logistic Regression (7 strongest predictors only)";
 RUN;
 
 DATA WORK.Pred_M4;
@@ -486,7 +488,7 @@ RUN;
 /* ----------------------------------------------------------------------------
    — AUC (c-STATISTIC) VIA TRAPEZOIDAL INTEGRATION
    ----------------------------------------------------------------------------
-   The goal is to compute AUC ourselves using the trapezoidal rule:
+   The goal is to compute AUC using the trapezoidal rule:
      AUC = sum of (width along x-axis) * (average height between adjacent points)
    where x = 1 - Specificity and y = Sensitivity.
 
@@ -557,7 +559,7 @@ PROC SORT DATA = WORK.AUC_Summary;
 RUN;
 
 PROC PRINT DATA = WORK.AUC_Summary NOOBS;
-    TITLE "AUC (c-statistic) comparison: all four candidate models evaluated on Local_Val";
+    TITLE "AUC (c-statistic) comparison: All four candidate models evaluated on Local_Val";
 RUN;
 
 
@@ -634,7 +636,7 @@ RUN;
              model_label          = M4 Lean);
 
 PROC PRINT DATA = WORK.KS_All  NOOBS;
-    TITLE "KS statistic comparison: all four candidate models evaluated on Local_Val";
+    TITLE "KS Statistic Comparison: All four candidate models evaluated on Local_Val";
 RUN;
 
 
@@ -658,7 +660,7 @@ DATA WORK.Gini_Summary;
 RUN;
 
 PROC PRINT DATA = WORK.Gini_Summary NOOBS;
-    TITLE " AUC and Gini coefficient comparison: all four candidate models evaluated on Local_Val";
+    TITLE " AUC and Gini coefficient comparison: All four candidate models evaluated on Local_Val";
 RUN;
 
 
@@ -791,12 +793,11 @@ RUN;
 /* ============================================================================
    SECTION 3 — FINAL MODEL TRAINED ON 100% OF WORK.TRAIN
    ----------------------------------------------------------------------------
-   After reviewing the Section 2 diagnostics,we select the  winning model and
+   After reviewing the Section 2 diagnostics,we select the  winning model(Model 1) and
    retrain it on the full WORK.Train dataset
    ============================================================================ */
 
 /*  Train the final model and score the blind test set  */
-
 /* Capture the model coefficient estimates*/
 ODS OUTPUT ParameterEstimates = WORK.Final_Model_Betas;
 
@@ -826,7 +827,7 @@ PROC LOGISTIC DATA = WORK.Train  DESCENDING  PLOTS = (ROC);
     SCORE DATA = WORK.Test
           OUT  = WORK.Dataquest_Submission;
 
-    TITLE "Final model trained on 100% of Work.Train and scored on Work.Test";
+    TITLE "Final Logistic Regression Model trained on 100% of Work.Train and scored on Work.Test";
 RUN;
 
 ODS OUTPUT CLOSE;
@@ -843,10 +844,7 @@ RUN;
 /* ============================================================================
    SECTION 4 FORMAT AND VERIFY THE SUBMISSION FILE
    ----------------------------------------------------------------------------
-   The submission requires two columns:
-     applicant_id_hash      — unique applicant identifier (kept from test set)
-     default_probability    — predicted probability of default (0 to 1)
-
+  
    Three sanity checks are run:
      1. Probability range check: no value should be below 0 or above 1.
      2. Row count check: the submission should have exactly as many rows as
