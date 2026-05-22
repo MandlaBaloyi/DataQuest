@@ -127,8 +127,8 @@ The script is divided into four sections. You can run them all at once or sectio
 
 | Model | Selection Method | Variables |
 |-------|-----------------|-----------|
-| **M1 — Stepwise** | Automatic stepwise selection (p ≤ 0.05 entry and stay) | 20 candidates |
-| **M2 — Backward** | Backward elimination (p ≤ 0.05 to stay) | 20 candidates |
+| **M1 — Stepwise** | Automatic stepwise selection (p ≤ 0.05 entry and stay) | 21 candidates |
+| **M2 — Backward** | Backward elimination (p ≤ 0.05 to stay) | 21 candidates |
 | **M3 — Theory-Driven** | No selection — 16 variables forced in based on domain knowledge | 16 fixed |
 | **M4 — Parsimonious** | No selection — 7 strongest predictors only | 7 fixed |
 
