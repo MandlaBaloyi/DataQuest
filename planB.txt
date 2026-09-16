@@ -1,0 +1,401 @@
+]EARLY WARNING SYSTEM FOR SCHOOL DROPOUT (SOUTH AFRICA)
+Full Presentation & Project Notes
+=========================================================
+
+
+1. THE PROBLEM
+---------------------------------------------------------
+About 40% of learners who start Grade 1 in South Africa
+never make it to Grade 12. They disappear from the school
+system somewhere along the way.
+(Source: DG Murray Trust's Zero Dropout Campaign)
+
+Meaning: out of every 100 kids who start Grade 1, about 40
+of them are gone before matric.
+
+Research points to Grade 10, 11, and 12 as the years where
+the steepest drop-off happens (nationally, only ~84% move
+from Grade 10 to 11, and ~78% move from Grade 11 to 12).
+We are using this existing research, not claiming we
+discovered it ourselves — we have not yet built our own
+model to prove this number independently.
+
+The real gap: there is no widely deployed, data-driven tool
+that predicts, ahead of time, WHICH schools are at highest
+risk of losing learners — so districts and NGOs currently
+find out mostly after the fact, when it's too late to help.
+
+Note: this is NOT about matric pass rates or exam results.
+We are not arguing with Umalusi or the Department of Basic
+Education's numbers. Pass rate and dropout rate measure two
+different things. Our focus is only on learners leaving the
+system before they even get to write the exam.
+
+
+2. OUR SOLUTION
+---------------------------------------------------------
+A model that predicts, per school, the expected dropout %
+for its current Grade 10, 11, and 12 cohorts — using a
+school's own history (enrollment trends, funding level,
+teacher-to-learner ratio, past pass-rate trend) — so
+districts and support organizations know WHICH schools to
+help FIRST, BEFORE learners actually leave.
+
+Example output:
+  "School X is predicted to lose 25% of its Grade 10 class
+   before reaching matric."
+
+In one line:
+"We're not trying to fix the whole education system. We're
+trying to give people a warning light — so they know WHICH
+schools to help first, and BEFORE the damage is already done."
+
+
+3. WHERE THE DATA COMES FROM (concrete, real sources)
+---------------------------------------------------------
+This is the part that makes the project buildable, not just
+an idea. Here is exactly where the data lives:
+
+a) DBE EMIS - Schools Masterlist
+   Source: Department of Basic Education, EMIS unit
+   Access via: education.gov.za (EMIS section) and the
+   Open Data South Africa toolkit's education page
+   What it gives: every registered school in the country,
+   with a unique EMIS number, school name, phase (primary/
+   secondary), physical address, district, and province.
+   Why we need it: this EMIS number becomes the KEY that
+   lets us join every other dataset together, school by
+   school, year by year.
+
+b) DBE "No Fee Schools" lists (published per province, per
+   year, as PDFs)
+   Example confirmed: "Western Cape No Fee Schools 2023" —
+   contains EMIS number, school name, phase, full address,
+   education district, QUINTILE (funding level, 1 to 5),
+   and LEARNER NUMBERS for that year, for every school in
+   that province.
+   Why we need it: this gives us funding quintile AND a
+   year-by-year learner headcount per school — repeat this
+   for multiple years (e.g. 2019, 2020, 2021, 2022, 2023)
+   and we can calculate enrollment TRENDS per school, which
+   is one of our most important features.
+
+c) SNAP Survey of Ordinary Schools (annual, national)
+   Source: DBE EMIS directorate
+   Hosted by: DataFirst (University of Cape Town),
+   datafirst.uct.ac.za — also referenced on the World Bank
+   microdata catalog
+   Coverage confirmed: 1997-2016 (version 1.6), collected
+   from every ordinary school in the country each year
+   What it gives: learner and educator numbers per school,
+   staff category (educators, support staff, admin staff),
+   full-time/part-time status, gender
+   Why we need it: this is how we calculate the TEACHER-TO-
+   LEARNER RATIO per school per year — a known predictor of
+   how well-resourced a school is.
+   Limitation to flag honestly: the confirmed public dataset
+   runs up to 2016. More recent years likely exist inside
+   DBE's internal EMIS system but are not confirmed as
+   openly downloadable — this is something we'd need to
+   verify directly with DBE or DataFirst, and is a real
+   constraint on how current our data can be.
+
+d) National Senior Certificate (NSC) Examination results,
+   by school
+   Source: DBE, distributed via DataFirst
+   Coverage confirmed: 2010-2016 microdata (registration
+   required through DataFirst's Data Access Agreement
+   process); more recent years are published as annual PDF
+   "School Performance Reports" and "School Subject Reports"
+   directly by DBE and by provincial education departments
+   (e.g. Western Cape Education Department publishes its own
+   NSC award/results lists)
+   What it gives: pass rate and subject performance, by
+   school, by year
+   Why we need it: pass-rate TREND per school is one of our
+   model's core features, and (longer-term) it is also how
+   we would validate whether our dropout-risk predictions
+   line up with real subsequent outcomes.
+
+e) Stats SA - General Household Survey (GHS)
+   Source: Statistics South Africa
+   Access via: Stats SA's own data portal / Nesstar system,
+   and referenced on data.gov.za
+   What it gives: household-level survey data including
+   school attendance status and REASONS for not attending
+   school (e.g. no money, pregnancy, illness, distance),
+   broken down by province
+   Why we need it: this is the only data source that tells
+   us WHY learners leave, at a province level — useful for
+   explaining model results and for choosing which kind of
+   support (financial, psychosocial, transport) fits a
+   region's actual driving factors.
+
+f) Provincial open data portals
+   Example confirmed: Western Cape Government (WCG) Open
+   Data Portal, wcg-opendataportal-westerncapegov.hub.arcgis.com
+   What it gives: provincial-level datasets, some with GIS/
+   mapping layers
+   Why we need it: useful for adding geography (rural vs.
+   urban, distance-based features) and for a first pilot
+   province, since Western Cape's data appears to be some
+   of the most complete and well-organised publicly.
+
+g) DG Murray Trust / Zero Dropout Campaign published research
+   Source: dgmt.co.za and zerodropout.co.za
+   What it gives: the national dropout statistics we are
+   quoting (the ~40% figure), plus their own case studies on
+   Early Warning Systems already piloted with NGO partners
+   Why we need it: this is our evidence that the problem is
+   real and already a national priority, and it is the
+   benchmark we can sanity-check our own numbers against.
+
+Summary — one sentence per source:
+  EMIS Masterlist        -> school identity & join key
+  No Fee Schools lists   -> quintile + yearly learner counts
+  SNAP Survey            -> teacher/educator numbers per school
+  NSC results by school  -> pass-rate trend per school
+  Stats SA GHS           -> province-level reasons for leaving
+  WCG Open Data Portal   -> provincial pilot data + geography
+  Zero Dropout Campaign  -> national benchmark statistics
+
+
+4. THE FULL DATA PROCESS (step by step)
+---------------------------------------------------------
+STEP 1 - Collect
+  Download the datasets above, starting with ONE province
+  (Western Cape looks most complete) and a handful of years
+  (e.g. 2016-2023) to keep the first version manageable.
+
+STEP 2 - Clean and join
+  Use the EMIS number as the common key to join:
+    School Masterlist + No Fee Schools list (quintile,
+    learner counts) + SNAP survey (staff numbers) + NSC
+    results (pass rate) — all into one table, one row per
+    school per year.
+  Handle problems: schools that closed, merged, or changed
+  EMIS numbers; missing years; independent (non-no-fee)
+  schools that may not appear in the No Fee list (these
+  would need a separate source, e.g. the full EMIS Masterlist
+  learner counts, if available).
+
+STEP 3 - Engineer features (the inputs the model actually uses)
+  For each school, for each year, calculate:
+    - Grade 10 enrollment this year vs. Grade 9 enrollment
+      last year (a proxy signal for repeaters/early leavers)
+    - Grade 11 enrollment this year vs. Grade 10 enrollment
+      last year (tracks the cohort forward one year)
+    - Grade 12 enrollment this year vs. Grade 11 enrollment
+      last year
+    - Funding quintile (1-5, or no-fee flag)
+    - Teacher-to-learner ratio (from SNAP)
+    - Pass-rate trend over the last 3 years (from NSC results)
+    - District and province (as categories)
+    - Rural vs. urban flag
+
+STEP 4 - Build the label (what we're trying to predict)
+  For a school's Grade 10 cohort in year Y, track that same
+  school's enrollment through Grade 11 (year Y+1) and Grade 12
+  (year Y+2), and matric candidates (year Y+2 or later,
+  allowing for repeaters).
+  Dropout % (our label) = 1 minus (learners who made it to
+  matric-writing stage / learners who started Grade 10 that
+  year), for each historical cohort where we already know
+  what happened.
+
+STEP 5 - Split the data
+  Train on older cohorts (e.g. Grade 10 classes from
+  2016-2020, whose outcomes we already know) and hold back
+  the most recent known cohort (e.g. 2021 or 2022) purely for
+  testing — this is how we check if the model's predictions
+  are actually trustworthy before trusting it on this year's
+  live Grade 10 class.
+
+STEP 6 - Train the model
+  Start simple: Linear Regression (easiest to explain to a
+  non-technical audience: "each feature adds or subtracts
+  some % risk").
+  Then try a stronger model: Random Forest Regressor or
+  Gradient Boosting (e.g. XGBoost) — these handle
+  non-straight-line relationships better (for example, being
+  very underfunded AND very short-staffed together might be
+  much worse than either problem alone, and tree-based models
+  capture that kind of interaction).
+  Compare both — if the stronger model isn't meaningfully
+  better, the simpler, more explainable one is the better
+  real-world choice.
+
+STEP 7 - Evaluate
+  Check Mean Absolute Error (MAE): on average, how many
+  percentage points off are our predictions from the real
+  historical dropout %?
+  Check R-squared: how much of the difference between
+  "high-risk schools" and "low-risk schools" does our model
+  actually explain?
+  Look at which features matter most (feature importance) so
+  we can explain WHY a school is flagged, not just THAT it's
+  flagged.
+
+STEP 8 - Deploy / present
+  Grist: hold the school-level table (school, district, %
+  predicted, key driving factor) as a live, shareable database.
+  Flourish: build a ranked bar chart or a choropleth map
+  colouring districts/schools by predicted dropout risk, for
+  the actual presentation and for any decision-maker to browse.
+
+
+5. WHY THIS APPROACH, IN SIMPLE TERMS
+---------------------------------------------------------
+- Grade 10-12 is where research shows the steepest drop, so
+  that's where our model focuses.
+- We predict at the SCHOOL level, not the individual learner
+  level, because individual learner records are private and
+  protected by law (POPIA) — we don't have legal access to
+  named student data. School-level data is public.
+- The output is a PERCENTAGE per school, not a yes/no per
+  student — this makes it a resource-ranking tool for
+  decision-makers, not a surveillance tool on individual kids.
+- This isn't a made-up idea. The Zero Dropout Campaign
+  already told the Department of Basic Education that an
+  Early Warning System is needed, and already runs a manual,
+  spreadsheet-based, individual-level version inside specific
+  schools (a red/amber/green "traffic light" system). Our
+  school/district-level model is the missing macro layer
+  above that — it tells a province WHICH schools to prioritise,
+  not just which individual kid inside one school to watch.
+
+
+6. BUSINESS MODEL (how this survives past the hackathon)
+---------------------------------------------------------
+
+1) THE PROBLEM (brief)
+  ~40% of learners who start Grade 1 never finish Grade 12,
+  worst between Grade 10-12. No existing open, data-driven
+  tool predicts ahead of time WHICH schools are at highest
+  risk, so help can be sent before it's needed rather than
+  after learners have already left.
+
+2) THE SOLUTION
+  A model that predicts each school's expected dropout % for
+  its Grade 10-12 cohorts, using open historical school data
+  (enrollment trends, funding quintile, teacher-learner
+  ratio, pass-rate trend), and ranks schools/districts so
+  decision-makers know where to act first — delivered as a
+  live Grist database feeding a Flourish dashboard.
+
+3) WHO IT'S FOR — the customer / beneficiary, clearly split:
+  USERS (who operate the tool):
+    - Department of Basic Education (national) and provincial
+      education departments — resource allocation, and finally
+      tracking dropout as a measurable KPI
+    - NGOs already in this exact space (Zero Dropout Campaign,
+      Masibumbane Development Organisation) — a scaled-up
+      replacement for their manual Excel traffic-light system
+    - District officials and school principals — a ranked,
+      actionable list instead of guesswork
+  BENEFICIARIES (who the value ultimately reaches):
+    - The learners and families who get support before
+      dropping out, instead of being counted only afterward
+
+4) HOW IT DELIVERS VALUE — why it's better than what exists:
+    - Existing tool: a manual Excel spreadsheet with a simple
+      red/amber/green rule-of-thumb, run school-by-school,
+      by whichever NGO happens to be present in that school.
+    - Our tool: a trained statistical model, run at
+      district/province scale, using multiple real factors at
+      once (not just one rule), so it can rank ALL schools in
+      a province against each other — something no one
+      currently has a way to do.
+    - It turns "we think dropout is a problem here" into "this
+      specific school is projected to lose 25% of its Grade 10
+      class, and here's the main factor driving that number,"
+      which is what actually justifies where money and staff
+      get sent.
+
+5) HOW IT'S FUNDED / SUSTAINED
+    - Not sold to learners, families, or schools — it is a
+      tool FOR government/NGOs, not a product they buy from us.
+    - It plugs into an ecosystem that already funds this exact
+      problem: DG Murray Trust funds the Zero Dropout Campaign
+      already; provincial education departments already have
+      EMIS/data budgets.
+    - Realistic funding paths: (a) grant funding from an
+      existing education-focused funder (DGMT or similar),
+      (b) adoption/commissioning by a provincial education
+      department as a planning tool, (c) partnership with an
+      NGO that absorbs it into their existing program funding.
+    - It does not need a subscription model to survive — its
+      sustainability comes from being useful enough that an
+      existing funded body wants to keep running it.
+
+6) HOW IT SCALES
+    Step 1: Pilot in ONE province with the most complete open
+    data (Western Cape looks strongest based on our research).
+    Step 2: Validate predictions against that province's own
+    real historical outcomes (does a school we flagged as
+    high-risk actually show a bigger drop the following year?).
+    Step 3: Expand province by province, re-checking that the
+    same features still predict well in each new province
+    (funding/context differs a lot between provinces).
+    Step 4 (long-term/national): propose integration with
+    SA-SAMS and LURITS — the exact national learner-tracking
+    system DBE has already been asked to build by the Zero
+    Dropout Campaign — so the model eventually runs on live,
+    national data instead of separately-collected provincial
+    files.
+
+7) TEAM / RESOURCES — what's actually needed to build and run it:
+    DATA ACCESS:
+      - The open datasets in Section 3 (EMIS Masterlist, No
+        Fee Schools lists, SNAP survey, NSC results by school,
+        Stats SA GHS)
+      - Ideally, direct contact with DataFirst (for registered
+        microdata access) and/or a provincial education
+        department (for the most current data, since some
+        public datasets stop around 2016)
+    PARTNERSHIPS:
+      - A conversation with the Zero Dropout Campaign / DGMT
+        would be extremely valuable — they already have real
+        outcome data and credibility with DBE, and could
+        sanity-check our model against ground truth
+    PEOPLE / SKILLS NEEDED ON THE TEAM:
+      - Someone to collect and clean the data (spreadsheet/
+        Python work: joining tables by EMIS number, handling
+        missing years)
+      - Someone to build and test the model (Python, e.g.
+        pandas + scikit-learn for linear regression / random
+        forest / gradient boosting)
+      - Someone to build the presentation layer (Grist for the
+        live data table, Flourish for the map/chart dashboard)
+      - Someone to handle the pitch/business case (this
+        document, the "why this matters" framing for judges or
+        a real-world partner)
+    TECH STACK (all free/low-cost, usable within a hackathon):
+      - Python (pandas, scikit-learn) or a spreadsheet tool for
+        modelling
+      - Grist for the structured, shareable database
+      - Flourish for the public-facing visualization
+      - No paid infrastructure required to build a working
+        prototype
+
+
+7. IMPORTANT LIMITATIONS TO BE HONEST ABOUT
+---------------------------------------------------------
+- We predict at the SCHOOL level, not the individual learner
+  level — we don't have access to private, named student data.
+- Some of our confirmed public datasets (SNAP survey, NSC
+  microdata) are only clearly confirmed open up to around
+  2016, meaning recent years may need to be sourced from
+  annual PDF reports instead of clean downloadable files —
+  this adds manual work we should plan for honestly.
+- The model won't be perfect:
+    - False positive: a flagged school doesn't lose as many
+      learners as predicted — low cost, just extra support
+      sent that wasn't strictly needed.
+    - False negative: an unflagged school still loses
+      learners we didn't predict — the real risk, and why the
+      model needs regular retraining and monitoring.
+- "Grade 10-12 is the steepest" is based on existing external
+  research, not a number we've independently proven ourselves
+  from our own data yet — our model, once built, is what lets
+  us check this claim against real numbers.

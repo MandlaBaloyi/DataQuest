@@ -1,0 +1,4 @@
+https://opendataza.gitbook.io/toolkit/open-data-resources/healthcare-data-resources
+https://opendataza.gitbook.io/toolkit/open-data-resources/agriculture-data-sources
+https://www.getgrist.com/
+https://flourish.studio/

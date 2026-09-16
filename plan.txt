@@ -1,0 +1,27 @@
+"Business Model" — what they actually mean
+
+In everyday language, a business model just answers one question:
+"How does this solution actually work and survive in the real world?" 
+Not just "what's the cool idea," but "who does it help, 
+who pays for it (if anyone), how does it get built and kept running,
+ and why would it keep existing after the hackathon ends?"
+
+Usually want you to cover things like:
+
+The problem — stated clearly and briefly (you've already got this)
+The solution — what you're building/offering
+Who it's for — who uses it (government dept, NGO, schools, farmers, etc.) — your "customer" or "beneficiary"
+How it delivers value — why is this better than what exists now
+How it's funded or sustained — is it free and government-adopted, does an NGO fund it, is there a subscription, grant funding, etc.
+How it scales — could this work in one province and then expand nationally?
+Team/resources — what's needed to actually build and run it (data access, partnerships, tech)
+
+
+The business model — filled in with actual reasoning, not template answers
+Problem: ~40% of South African learners who start Grade 1 never finish matric; existing early-warning tools are manual, spreadsheet-based, and not scaled nationally.
+Solution: A trained early-warning model (logistic regression / random forest) that scores individual learners or schools by dropout risk using academic, behavioral, and attendance-style features, feeding a dashboard that ranks who needs help first.
+Who it's for: Not the learner directly — the user is the school/district official or NGO caseworker who acts on the flag. The learner is the beneficiary.
+Value over what exists: Replaces a static, rule-based Excel traffic light with a model that can use more features and update as new data comes in — more accurate targeting of scarce support resources.
+How it's sustained: Doesn't need to invent a funding model from scratch — positions itself as a tool that plugs into an already-funded ecosystem (DGMT/Zero Dropout Campaign, provincial education departments) rather than needing learners or schools to pay anything.
+How it scales: Pilot in one province/district with existing NGO partners → validate against real outcomes → propose integration with SA-SAMS/LURITS, the exact national system the campaign already asked DBE to build.
+What's needed to build it: access to historical enrollment/attendance/performance data (GHS, DBE SNAP, or a partner NGO's own records), and ideally a relationship with one of these existing organizations rather than starting in isolation.
